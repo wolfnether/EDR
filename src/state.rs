@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
 use crossterm::event::KeyCode;
-use rayon::prelude::{IntoParallelRefMutIterator, ParallelIterator};
-use tokio::io::{stdin, AsyncReadExt};
 
 use crate::data::{Server, Station, SteamPlayer, SteamPlayers, StopDescription, Train};
 
@@ -198,8 +196,18 @@ impl<'a> State<'a> {
                             }) {
                                 if train_pos <= station_pos {
                                     let stop = &timetable[station_pos];
-                                    let next_stop = &timetable[station_pos + 1];
-                                    let prev_stop = &timetable[station_pos - 1];
+                                    let next_stop = if station_pos + 1 != timetable.len() {
+                                        &timetable[station_pos + 1]
+                                    } else {
+                                        //todo something better
+                                        &timetable[station_pos]
+                                    };
+                                    let prev_stop = if station_pos != 0 {
+                                        &timetable[station_pos - 1]
+                                    } else {
+                                        //todo something better
+                                        &timetable[station_pos]
+                                    };
                                     if let Some(stop_type) = stop.stop_type.as_ref() {
                                         if stop_type == "ph" {
                                             let arrival = stop
