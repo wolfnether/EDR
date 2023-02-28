@@ -110,7 +110,7 @@ pub struct StopDescription {
     pub scheduled_arrival_hour: Option<String>,
     pub scheduled_departure_hour: Option<String>,
     pub station: String,
-    layover: Option<String>,
+    pub layover: Option<String>,
     pub stop_type: Option<String>,
     pub line: String,
 }

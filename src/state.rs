@@ -208,60 +208,8 @@ impl<'a> State<'a> {
                                         //todo something better
                                         &timetable[station_pos]
                                     };
-                                    if let Some(stop_type) = stop.stop_type.as_ref() {
-                                        if stop_type == "ph" {
-                                            let arrival = stop
-                                                .scheduled_arrival_hour
-                                                .as_ref()
-                                                .map_or(0, |time| {
-                                                    let time = time.split(':').collect::<Vec<_>>();
-                                                    time[0].parse::<isize>().unwrap() * 60
-                                                        + time[1].parse::<isize>().unwrap()
-                                                });
-
-                                            let departure = stop
-                                                .scheduled_departure_hour
-                                                .as_ref()
-                                                .map_or(0, |time| {
-                                                    let time = time.split(':').collect::<Vec<_>>();
-                                                    time[0].parse::<isize>().unwrap() * 60
-                                                        + time[1].parse::<isize>().unwrap()
-                                                });
-                                            self.events.push(Event {
-                                                name: format!(
-                                                    "{} {}",
-                                                    train.train_name, train.train_no
-                                                ),
-                                                time: arrival,
-                                                planned_time: arrival,
-                                                ty: EventType::Entering,
-                                                prev: format!(
-                                                    "{}/L.{}",
-                                                    prev_stop.station,
-                                                    prev_stop.line.clone(),
-                                                ),
-                                                next: format!("platform ({})", departure - arrival),
-                                                player: train.t != "bot",
-                                            });
-                                            self.events.push(Event {
-                                                name: format!(
-                                                    "{} {}",
-                                                    train.train_name, train.train_no
-                                                ),
-                                                time: departure,
-                                                planned_time: departure,
-                                                ty: EventType::Departing,
-                                                prev: "Platform".to_string(),
-                                                next: format!(
-                                                    "{}/L.{}",
-                                                    next_stop.station,
-                                                    stop.line.clone(),
-                                                ),
-                                                player: train.t != "bot",
-                                            });
-                                        }
-                                    } else {
-                                        let passing = stop.scheduled_arrival_hour.as_ref().map_or(
+                                    if let Some(layover) = stop.layover.as_ref() {
+                                        let arrival = stop.scheduled_arrival_hour.as_ref().map_or(
                                             0,
                                             |time| {
                                                 let time = time.split(':').collect::<Vec<_>>();
@@ -269,27 +217,71 @@ impl<'a> State<'a> {
                                                     + time[1].parse::<isize>().unwrap()
                                             },
                                         );
-
-                                        self.events.push(Event {
-                                            name: format!(
-                                                "{} {}",
-                                                train.train_name, train.train_no
-                                            ),
-                                            time: passing,
-                                            planned_time: passing,
-                                            ty: EventType::Passing,
-                                            prev: format!(
-                                                "{}/L.{}",
-                                                prev_stop.station,
-                                                prev_stop.line.clone(),
-                                            ),
-                                            next: format!(
-                                                "{}/L.{}",
-                                                next_stop.station,
-                                                stop.line.clone(),
-                                            ),
-                                            player: train.t != "bot",
-                                        });
+                                        if let Ok(layover) = layover.parse::<f32>() {
+                                            if layover == 0.0 {
+                                                self.events.push(Event {
+                                                    name: format!(
+                                                        "{} {}",
+                                                        train.train_name, train.train_no
+                                                    ),
+                                                    time: arrival,
+                                                    planned_time: arrival,
+                                                    ty: EventType::Passing,
+                                                    prev: format!(
+                                                        "{}/L.{}",
+                                                        prev_stop.station,
+                                                        prev_stop.line.clone(),
+                                                    ),
+                                                    next: format!(
+                                                        "{}/L.{}",
+                                                        next_stop.station,
+                                                        stop.line.clone(),
+                                                    ),
+                                                    player: train.t != "bot",
+                                                });
+                                            } else {
+                                                self.events.push(Event {
+                                                    name: format!(
+                                                        "{} {}",
+                                                        train.train_name, train.train_no
+                                                    ),
+                                                    time: arrival,
+                                                    planned_time: arrival,
+                                                    ty: EventType::Entering,
+                                                    prev: format!(
+                                                        "{}/L.{}",
+                                                        prev_stop.station,
+                                                        prev_stop.line.clone(),
+                                                    ),
+                                                    next: format!(
+                                                        "{}/L.{}",
+                                                        next_stop.station,
+                                                        stop.line.clone(),
+                                                    ),
+                                                    player: train.t != "bot",
+                                                });
+                                                self.events.push(Event {
+                                                    name: format!(
+                                                        "{} {}",
+                                                        train.train_name, train.train_no
+                                                    ),
+                                                    time: arrival + layover as isize,
+                                                    planned_time: arrival + layover as isize,
+                                                    ty: EventType::Departing,
+                                                    prev: format!(
+                                                        "{}/L.{}",
+                                                        prev_stop.station,
+                                                        prev_stop.line.clone(),
+                                                    ),
+                                                    next: format!(
+                                                        "{}/L.{}",
+                                                        next_stop.station,
+                                                        stop.line.clone(),
+                                                    ),
+                                                    player: train.t != "bot",
+                                                });
+                                            }
+                                        }
                                     }
                                 }
                             }
