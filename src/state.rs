@@ -1,13 +1,12 @@
-use std::collections::HashMap;
-
+use chrono::{DateTime, Timelike, Utc};
 use crossterm::event::KeyCode;
 
-use crate::data::{Server, Station, SteamPlayer, SteamPlayers, StopDescription, Train};
+use crate::data::{
+    Server, ServerResponse, Station, StationResponse, SteamPlayer, SteamPlayers, StopDescription,
+    Train, TrainResponse,
+};
 
-pub struct State<'a> {
-    pub station_translation: HashMap<&'a str, String>,
-    pub station_name_to_prefix: HashMap<&'a str, String>,
-
+pub struct State {
     pub servers: Vec<Server>,
     pub server_index: usize,
     pub selected_server: String,
@@ -29,11 +28,11 @@ pub enum Step {
     EDR,
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Debug)]
 pub struct Event {
     pub name: String,
-    pub time: isize,
-    pub planned_time: isize,
+    pub time: Option<DateTime<Utc>>,
+    pub planned_time: DateTime<Utc>,
     pub ty: EventType,
 
     pub player: bool,
@@ -44,14 +43,13 @@ pub struct Event {
 
 impl Event {
     pub fn get_time(&self) -> String {
-        if self.planned_time == self.time {
-            format!("{:0>2}:{:0>2}", self.time / 60, self.time % 60)
+        if let Some(time) = self.time {
+            todo!()
         } else {
             format!(
-                "{:0>2}:{:0>2} ({:+})",
-                self.time / 60,
-                self.time % 60,
-                self.time - self.planned_time
+                "{:0>2}:{:0>2}",
+                self.planned_time.hour(),
+                self.planned_time.minute()
             )
         }
     }
@@ -65,33 +63,25 @@ impl Ord for Event {
 
 impl PartialOrd for Event {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        if self.planned_time != 0 {
-            self.time.partial_cmp(&other.time)
-        } else if other.planned_time == 0 {
-            Some(core::cmp::Ordering::Equal)
-        } else {
-            Some(core::cmp::Ordering::Greater)
-        }
+        let a_time = self.time.unwrap_or(self.planned_time);
+        let b_time = other.time.unwrap_or(other.planned_time);
+
+        a_time.partial_cmp(&b_time)
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum EventType {
     Passing,
     Entering,
     Departing,
 }
 
-impl<'a> State<'a> {
-    pub async fn new() -> crate::Result<State<'a>> {
-        let servers = reqwest::get("https://staging.simrail.deadlykungfu.ninja/servers")
-            .await?
-            .json()
-            .await?;
+impl State {
+    pub async fn new() -> crate::Result<State> {
+        let servers = get_servers().await?;
 
         Ok(Self {
-            station_translation: ron::from_str(include_str!("../stations.ron")).unwrap(),
-            station_name_to_prefix: ron::from_str(include_str!("../station_prefix.ron")).unwrap(),
             servers,
             server_index: 0,
             selected_server: String::new(),
@@ -110,20 +100,20 @@ impl<'a> State<'a> {
     pub async fn refresh_data(&mut self) -> crate::Result<()> {
         match self.step {
             Step::ServerSelection => {
-                self.servers = reqwest::get("https://staging.simrail.deadlykungfu.ninja/servers")
-                    .await?
-                    .json()
-                    .await?
+                self.servers = get_servers().await?;
             }
 
             Step::StationSelection => {
                 self.stations = reqwest::get(format!(
-                    "https://staging.simrail.deadlykungfu.ninja/stations/{}",
+                    "https://panel.simrail.eu:8084/stations-open?serverCode={}",
                     self.selected_server
                 ))
                 .await?
-                .json()
-                .await?;
+                .json::<StationResponse>()
+                .await?
+                .data;
+
+                self.stations.sort_by(|a, b| a.name.cmp(&b.name));
 
                 let player = self
                     .stations
@@ -146,12 +136,13 @@ impl<'a> State<'a> {
             Step::EDR => {
                 self.events.clear();
                 let mut trains: Vec<Train> = reqwest::get(format!(
-                    "https://staging.simrail.deadlykungfu.ninja/trains/{}",
+                    "https://panel.simrail.eu:8084/trains-open?serverCode={}",
                     self.selected_server
                 ))
                 .await?
-                .json()
-                .await?;
+                .json::<TrainResponse>()
+                .await?
+                .data;
 
                 for train in trains.iter_mut() {
                     if let Some((nearest_station, _)) = self
@@ -164,35 +155,28 @@ impl<'a> State<'a> {
                             core::cmp::Ordering::Greater => (sb, d2),
                         })
                     {
-                        let loc = nearest_station.prefix.clone();
+                        let loc = nearest_station.name.clone();
                         train.loc = Some(loc.clone());
 
-                        let timetable: Vec<StopDescription> = reqwest::get(format!(
-                            "https://staging.simrail.deadlykungfu.ninja/train/{}",
-                            train.train_no,
+                        let mut timetable: Vec<StopDescription> = reqwest::get(format!(
+                            "https://simrail-edr.emeraldnetwork.xyz/train/{}/{}",
+                            self.selected_server, train.train_no,
                         ))
                         .await?
                         .json()
                         .await?;
 
-                        if let Some(train_pos) = timetable.iter().position(|s| {
-                            if let Some(prefix) = self.get_prefix(&s.station) {
-                                prefix == &loc
-                            } else {
-                                false
-                            }
-                        }) {
+                        timetable.sort_by(|a, b| a.indexOfPoint.cmp(&b.indexOfPoint));
+
+                        if let Some(train_pos) = timetable.iter().position(|s| s.nameOfPoint == loc)
+                        {
                             if let Some(station_pos) = timetable.iter().position(|s| {
-                                if let Some(prefix) = self.get_prefix(&s.station) {
-                                    prefix
-                                        == &self
-                                            .selected_station
-                                            .as_ref()
-                                            .expect("no selected station")
-                                            .prefix
-                                } else {
-                                    false
-                                }
+                                s.nameOfPoint
+                                    == self
+                                        .selected_station
+                                        .as_ref()
+                                        .expect("no station selected")
+                                        .name
                             }) {
                                 if train_pos <= station_pos {
                                     let stop = &timetable[station_pos];
@@ -208,80 +192,78 @@ impl<'a> State<'a> {
                                         //todo something better
                                         &timetable[station_pos]
                                     };
-                                    if let Some(layover) = stop.layover.as_ref() {
-                                        let arrival = stop.scheduled_arrival_hour.as_ref().map_or(
-                                            0,
-                                            |time| {
-                                                let time = time.split(':').collect::<Vec<_>>();
-                                                time[0].parse::<isize>().unwrap() * 60
-                                                    + time[1].parse::<isize>().unwrap()
-                                            },
-                                        );
-                                        if let Ok(layover) = layover.parse::<f32>() {
-                                            if layover == 0.0 {
-                                                self.events.push(Event {
-                                                    name: format!(
-                                                        "{} {}",
-                                                        train.train_name, train.train_no
-                                                    ),
-                                                    time: arrival,
-                                                    planned_time: arrival,
-                                                    ty: EventType::Passing,
-                                                    prev: format!(
-                                                        "{}/L.{}",
-                                                        prev_stop.station,
-                                                        prev_stop.line.clone(),
-                                                    ),
-                                                    next: format!(
-                                                        "{}/L.{}",
-                                                        next_stop.station,
-                                                        stop.line.clone(),
-                                                    ),
-                                                    player: train.t != "bot",
-                                                });
+
+                                    if stop.plannedStop.unwrap_or_default() == 0 {
+                                        self.events.push(Event {
+                                            name: format!(
+                                                "{} {}",
+                                                train.train_name, train.train_no
+                                            ),
+                                            time: stop
+                                                .actualArrivalTime
+                                                .as_ref()
+                                                .map(|_| stop.actualArrivalObject),
+                                            planned_time: stop.scheduledArrivalObject,
+                                            ty: EventType::Passing,
+                                            player: train.t != "bot",
+                                            prev: format!(
+                                                "{}/L.{}",
+                                                prev_stop.nameOfPoint, prev_stop.line
+                                            ),
+                                            next: format!(
+                                                "{}/L.{}",
+                                                next_stop.nameOfPoint, stop.line
+                                            ),
+                                        })
+                                    } else {
+                                        self.events.push(Event {
+                                            name: format!(
+                                                "{} {}",
+                                                train.train_name, train.train_no
+                                            ),
+                                            time: stop
+                                                .actualArrivalTime
+                                                .as_ref()
+                                                .map(|_| stop.actualArrivalObject),
+                                            planned_time: stop.scheduledArrivalObject,
+                                            ty: EventType::Entering,
+                                            player: train.t != "bot",
+                                            prev: format!(
+                                                "{}/L.{}",
+                                                prev_stop.nameOfPoint, prev_stop.line
+                                            ),
+                                            next: if let (Some(platform), Some(track)) =
+                                                (stop.platform.as_ref(), stop.track)
+                                            {
+                                                format!("{}/{}", platform, track)
                                             } else {
-                                                self.events.push(Event {
-                                                    name: format!(
-                                                        "{} {}",
-                                                        train.train_name, train.train_no
-                                                    ),
-                                                    time: arrival,
-                                                    planned_time: arrival,
-                                                    ty: EventType::Entering,
-                                                    prev: format!(
-                                                        "{}/L.{}",
-                                                        prev_stop.station,
-                                                        prev_stop.line.clone(),
-                                                    ),
-                                                    next: format!(
-                                                        "{}/L.{}",
-                                                        next_stop.station,
-                                                        stop.line.clone(),
-                                                    ),
-                                                    player: train.t != "bot",
-                                                });
-                                                self.events.push(Event {
-                                                    name: format!(
-                                                        "{} {}",
-                                                        train.train_name, train.train_no
-                                                    ),
-                                                    time: arrival + layover as isize,
-                                                    planned_time: arrival + layover as isize,
-                                                    ty: EventType::Departing,
-                                                    prev: format!(
-                                                        "{}/L.{}",
-                                                        prev_stop.station,
-                                                        prev_stop.line.clone(),
-                                                    ),
-                                                    next: format!(
-                                                        "{}/L.{}",
-                                                        next_stop.station,
-                                                        stop.line.clone(),
-                                                    ),
-                                                    player: train.t != "bot",
-                                                });
-                                            }
-                                        }
+                                                String::from("Not a plaform stop!")
+                                            },
+                                        });
+                                        self.events.push(Event {
+                                            name: format!(
+                                                "{} {}",
+                                                train.train_name, train.train_no
+                                            ),
+                                            time: stop
+                                                .actualDepartureTime
+                                                .as_ref()
+                                                .map(|_| stop.actualDepartureObject),
+                                            planned_time: stop.scheduledDepartureObject,
+                                            ty: EventType::Departing,
+                                            player: train.t != "bot",
+                                            prev: if let (Some(platform), Some(track)) =
+                                                (stop.platform.as_ref(), stop.track)
+                                            {
+                                                format!("{}/{}", platform, track)
+                                            } else {
+                                                String::from("")
+                                            },
+                                            next: format!(
+                                                "{}/L.{}",
+                                                next_stop.nameOfPoint, next_stop.line
+                                            ),
+                                        });
                                     }
                                 }
                             }
@@ -365,8 +347,13 @@ impl<'a> State<'a> {
             Step::EDR => (false, false),
         }
     }
+}
 
-    fn get_prefix(&self, station: &str) -> Option<&String> {
-        self.station_name_to_prefix.get(station)
-    }
+async fn get_servers() -> crate::Result<Vec<Server>> {
+    let servers = reqwest::get("https://panel.simrail.eu:8084/servers-open")
+        .await?
+        .json::<ServerResponse>()
+        .await?
+        .data;
+    Ok(servers)
 }

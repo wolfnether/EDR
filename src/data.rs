@@ -1,4 +1,11 @@
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+pub struct ServerResponse {
+    pub result: bool,
+    pub data: Vec<Server>,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct Server {
@@ -8,6 +15,12 @@ pub struct Server {
     pub server_code: String,
     #[serde(rename(deserialize = "IsActive"))]
     pub is_active: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StationResponse {
+    pub result: bool,
+    pub data: Vec<Station>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -47,6 +60,12 @@ pub struct SteamPlayer {
 #[derive(Debug, Deserialize)]
 pub struct SteamInfo {
     pub personaname: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TrainResponse {
+    pub result: bool,
+    pub data: Vec<Train>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,10 +126,22 @@ pub struct TrainData {
 
 #[derive(Debug, Deserialize)]
 pub struct StopDescription {
-    pub scheduled_arrival_hour: Option<String>,
-    pub scheduled_departure_hour: Option<String>,
-    pub station: String,
-    pub layover: Option<String>,
-    pub stop_type: Option<String>,
-    pub line: String,
+    pub nameOfPoint: String,
+    pub line: i64,
+    pub arrivalTime: Option<String>,
+    pub departureTime: Option<String>,
+    pub actualArrivalTime: Option<String>,
+    pub actualDepartureTime: Option<String>,
+
+    pub actualArrivalObject: DateTime<Utc>,
+    pub actualDepartureObject: DateTime<Utc>,
+    pub scheduledArrivalObject: DateTime<Utc>,
+    pub scheduledDepartureObject: DateTime<Utc>,
+
+    pub platform: Option<String>,
+    pub track: Option<i64>,
+
+    pub plannedStop: Option<i64>,
+
+    pub indexOfPoint: u64,
 }
